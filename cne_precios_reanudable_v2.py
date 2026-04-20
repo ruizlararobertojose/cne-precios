@@ -11,6 +11,7 @@ CNE precios nacional con:
 """
 
 import argparse
+import os
 import sqlite3
 import time
 from datetime import datetime
