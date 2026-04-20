@@ -150,6 +150,8 @@ def exportar_excel_y_csv(db, outdir, sello, etiqueta="final"):
     print(f"   CSV progreso: {csv_progreso}")
 
 def preparar_salida(resume_dir=None):
+    base_root = Path(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", Path.cwd()))
+
     if resume_dir:
         outdir = Path(resume_dir)
         if not outdir.exists():
@@ -163,7 +165,7 @@ def preparar_salida(resume_dir=None):
 
     now = datetime.now()
     sello = now.strftime("%Y%m%d_%H%M%S")
-    outdir = Path.cwd() / f"salida_{sello}"
+    outdir = base_root / f"salida_{sello}"
     outdir.mkdir(exist_ok=True)
     db_path = outdir / DB_NAME
     print(f"🆕 Nueva corrida en: {outdir}")
