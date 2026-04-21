@@ -8,14 +8,10 @@ BASE_DIR = Path(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "/app/data"))
 
 @app.route("/")
 def home():
-    return {
-        "message": "Downloader activo",
-        "base_dir": str(BASE_DIR),
-        "routes": [
-            "/files",
-            "/download/<ruta_relativa>"
-        ]
-    }
+    return """
+    <h2>Descargador CNE</h2>
+    <p>Ver archivos: <a href="/files">/files</a></p>
+    """
 
 @app.route("/files")
 def files():
@@ -25,12 +21,12 @@ def files():
     resultados = []
     for p in sorted(BASE_DIR.rglob("*")):
         if p.is_file():
-            resultados.append({
-                "name": p.name,
-                "relative_path": str(p.relative_to(BASE_DIR)).replace("\\", "/"),
-                "size_bytes": p.stat().st_size,
-            })
-    return jsonify(resultados)
+            rel = str(p.relative_to(BASE_DIR)).replace("\\", "/")
+            resultados.append(
+                f'<li><a href="/download/{rel}">{rel}</a> ({p.stat().st_size} bytes)</li>'
+            )
+
+    return "<h2>Archivos</h2><ul>" + "".join(resultados) + "</ul>"
 
 @app.route("/download/<path:relpath>")
 def download(relpath):
