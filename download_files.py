@@ -1,110 +1,51 @@
+from pathlib import Path
+from flask import Flask, abort, jsonify, send_file
 import os
-import smtplib
-from email.message import EmailMessage
 
+app = Flask(__name__)
 
-# =========================
-# FUNCIÓN PARA ENVIAR CORREO
-# =========================
-def enviar_correo_con_adjuntos(destinatario, asunto, cuerpo, archivos):
-    EMAIL_USER = os.getenv("EMAIL_USER")
-    EMAIL_PASS = os.getenv("EMAIL_PASS")
+BASE_DIR = Path(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "/app/data"))
 
-    if not EMAIL_USER or not EMAIL_PASS:
-        raise ValueError("Faltan variables EMAIL_USER o EMAIL_PASS")
+@app.route("/")
+def home():
+    return """
+    <h2>Descargador CNE</h2>
+    <p>Ver archivos: <a href="/files">/files</a></p>
+    """
 
-    msg = EmailMessage()
-    msg["From"] = EMAIL_USER
-    msg["To"] = destinatario
-    msg["Subject"] = asunto
-    msg.set_content(cuerpo)
+@app.route("/files")
+def files():
+    if not BASE_DIR.exists():
+        return jsonify({"error": f"No existe {BASE_DIR}"}), 404
 
-    for ruta in archivos:
-        if not os.path.exists(ruta):
-            print(f"⚠️ Archivo no encontrado: {ruta}")
-            continue
+    resultados = []
+    for p in sorted(BASE_DIR.rglob("*")):
+        if p.is_file():
+            rel = str(p.relative_to(BASE_DIR)).replace("\\", "/")
+            resultados.append(
+                f'<li><a href="/download/{rel}">{rel}</a> ({p.stat().st_size} bytes)</li>'
+            )
 
-        with open(ruta, "rb") as f:
-            contenido = f.read()
-            nombre = os.path.basename(ruta)
+    if not resultados:
+        return "<h2>Archivos</h2><p>No hay archivos todavía.</p>"
 
-        msg.add_attachment(
-            contenido,
-            maintype="application",
-            subtype="octet-stream",
-            filename=nombre
-        )
+    return "<h2>Archivos</h2><ul>" + "".join(resultados) + "</ul>"
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-        smtp.login(EMAIL_USER, EMAIL_PASS)
-        smtp.send_message(msg)
+@app.route("/download/<path:relpath>")
+def download(relpath):
+    target = (BASE_DIR / relpath).resolve()
+    base_resolved = BASE_DIR.resolve()
 
-    print("📧 Correo enviado correctamente")
+    try:
+        target.relative_to(base_resolved)
+    except Exception:
+        abort(403)
 
+    if not target.exists() or not target.is_file():
+        abort(404)
 
-# =========================
-# TU PROCESO (SIMULADO)
-# =========================
-def main():
-    print("🚀 Iniciando proceso...")
+    return send_file(target, as_attachment=True)
 
-    # Aquí va TODO tu código actual de descarga
-    # ----------------------------------------
-    # NO BORRES tu lógica, solo déjala aquí
-    # ----------------------------------------
-
-    # Ejemplo:
-    # descargar_datos()
-    # generar_excel()
-    # guardar_archivos()
-
-    print("✅ PROCESO TERMINADO")
-
-    # =========================
-    # BUSCAR ARCHIVOS GENERADOS
-    # =========================
-    ruta_base = "/app/data"
-
-    archivo_excel = None
-    archivo_csv = None
-    archivo_progreso = None
-
-    for root, dirs, files in os.walk(ruta_base):
-        for f in files:
-            ruta_completa = os.path.join(root, f)
-
-            if f.endswith(".xlsx"):
-                archivo_excel = ruta_completa
-
-            elif f.endswith(".csv") and "precios" in f:
-                archivo_csv = ruta_completa
-
-            elif f.endswith(".csv") and "progreso" in f:
-                archivo_progreso = ruta_completa
-
-    archivos = [a for a in [archivo_excel, archivo_csv, archivo_progreso] if a]
-
-    print("📂 Archivos detectados:")
-    for a in archivos:
-        print(a)
-
-    # =========================
-    # ENVIAR CORREO
-    # =========================
-    enviar_correo_con_adjuntos(
-        destinatario="ruizlara.roberto@gmail.com",
-        asunto="✅ CNE precios - proceso terminado",
-        cuerpo="""
-Proceso terminado correctamente.
-
-Se adjuntan los archivos generados.
-""",
-        archivos=archivos
-    )
-
-
-# =========================
-# ENTRYPOINT
-# =========================
 if __name__ == "__main__":
-    main()
+    port = int(os.getenv("PORT", "8080"))
+    app.run(host="0.0.0.0", port=port)
