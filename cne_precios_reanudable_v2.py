@@ -242,7 +242,38 @@ def main():
                 time.sleep(PAUSA_CORTA_SEG)
 
     exportar_excel_y_csv(db, outdir, sello, etiqueta="final")
+import smtplib
+from email.message import EmailMessage
 
+def enviar_correo(archivos):
+    EMAIL_USER = os.getenv("EMAIL_USER")
+    EMAIL_PASS = os.getenv("EMAIL_PASS")
+
+    if not EMAIL_USER or not EMAIL_PASS:
+        print("❌ Faltan variables de correo")
+        return
+
+    msg = EmailMessage()
+    msg["Subject"] = "✅ CNE precios terminado"
+    msg["From"] = EMAIL_USER
+    msg["To"] = "ruizlara.roberto@gmail.com"
+    msg.set_content("Proceso terminado. Se adjuntan archivos.")
+
+    for archivo in archivos:
+        if archivo and os.path.exists(archivo):
+            with open(archivo, "rb") as f:
+                msg.add_attachment(
+                    f.read(),
+                    maintype="application",
+                    subtype="octet-stream",
+                    filename=os.path.basename(archivo)
+                )
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+        smtp.login(EMAIL_USER, EMAIL_PASS)
+        smtp.send_message(msg)
+
+    print("📧 Correo enviado")
     total = db.execute("SELECT COUNT(*) FROM precios").fetchone()[0]
     total_municipios = db.execute("SELECT COUNT(*) FROM progreso").fetchone()[0]
 
