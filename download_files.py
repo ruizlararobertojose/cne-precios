@@ -4,7 +4,7 @@ import os
 
 app = Flask(__name__)
 
-BASE_DIR = Path(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "/app/data"))
+BASE_DIR = Path("/app")
 
 @app.route("/")
 def home():
