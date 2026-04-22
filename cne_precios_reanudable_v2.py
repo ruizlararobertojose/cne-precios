@@ -8,14 +8,17 @@ CNE precios nacional con:
 - Guardado incremental en SQLite
 - Exportación automática a Excel y CSV
 - Pausa cada 1000 municipios por 5 minutos
+- Envío opcional por correo al finalizar
 """
 
 import argparse
 import os
 import sqlite3
 import time
+import smtplib
 from datetime import datetime
 from pathlib import Path
+from email.message import EmailMessage
 
 import pandas as pd
 import requests
@@ -38,6 +41,7 @@ HEADERS = {
 
 DB_NAME = "cne_resume.db"
 
+
 def get_json(session, url, params=None):
     for intento in range(1, MAX_REINTENTOS + 1):
         try:
@@ -49,6 +53,7 @@ def get_json(session, url, params=None):
             time.sleep(3 * intento)
     print("❌ Falló definitivamente")
     return None
+
 
 def init_db(path):
     conn = sqlite3.connect(path)
@@ -84,6 +89,7 @@ def init_db(path):
     conn.commit()
     return conn
 
+
 def insert_precio(db, fecha, hora, entidad_id, entidad, municipio_id, municipio, item):
     db.execute("""
     INSERT OR IGNORE INTO precios VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
@@ -101,6 +107,7 @@ def insert_precio(db, fecha, hora, entidad_id, entidad, municipio_id, municipio,
         item.get("SubProducto"),
         item.get("PrecioVigente"),
     ))
+
 
 def upsert_progreso(db, entidad_id, entidad, municipio_id, municipio, total_registros, estado):
     db.execute("""
@@ -121,12 +128,14 @@ def upsert_progreso(db, entidad_id, entidad, municipio_id, municipio, total_regi
         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     ))
 
+
 def ya_procesado(db, entidad_id, municipio_id):
     row = db.execute(
         "SELECT 1 FROM progreso WHERE entidad_id=? AND municipio_id=? LIMIT 1",
         (entidad_id, municipio_id)
     ).fetchone()
     return row is not None
+
 
 def exportar_excel_y_csv(db, outdir, sello, etiqueta="final"):
     precios = pd.read_sql_query("SELECT * FROM precios", db)
@@ -150,6 +159,9 @@ def exportar_excel_y_csv(db, outdir, sello, etiqueta="final"):
     print(f"   CSV precios: {csv_precios}")
     print(f"   CSV progreso: {csv_progreso}")
 
+    return excel_path, csv_precios, csv_progreso
+
+
 def preparar_salida(resume_dir=None):
     base_root = Path(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", Path.cwd()))
 
@@ -172,6 +184,53 @@ def preparar_salida(resume_dir=None):
     print(f"🆕 Nueva corrida en: {outdir}")
     return outdir, db_path, sello
 
+
+def enviar_correo(archivos):
+    email_user = os.getenv("EMAIL_USER")
+    email_pass = os.getenv("EMAIL_PASS")
+    destinatario = os.getenv("EMAIL_TO", "ruizlara.roberto@gmail.com")
+
+    if not email_user or not email_pass:
+        print("❌ No se enviará correo: faltan EMAIL_USER o EMAIL_PASS")
+        return
+
+    msg = EmailMessage()
+    msg["Subject"] = "✅ CNE precios terminado"
+    msg["From"] = email_user
+    msg["To"] = destinatario
+    msg.set_content(
+        "Proceso terminado correctamente.\n\n"
+        "Se adjuntan los archivos generados."
+    )
+
+    archivos_adjuntos = 0
+    for archivo in archivos:
+        archivo = Path(archivo)
+        if archivo.exists() and archivo.is_file():
+            with open(archivo, "rb") as f:
+                msg.add_attachment(
+                    f.read(),
+                    maintype="application",
+                    subtype="octet-stream",
+                    filename=archivo.name
+                )
+            archivos_adjuntos += 1
+        else:
+            print(f"⚠️ No se encontró archivo para adjuntar: {archivo}")
+
+    if archivos_adjuntos == 0:
+        print("⚠️ No se adjuntó ningún archivo; se omite envío de correo")
+        return
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
+            smtp.login(email_user, email_pass)
+            smtp.send_message(msg)
+        print("📧 Correo enviado correctamente")
+    except Exception as e:
+        print(f"❌ Error al enviar correo: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--resume-dir", help="Ruta de la carpeta salida_... para reanudarla")
@@ -192,6 +251,7 @@ def main():
     entidades = get_json(session, URL_ENTIDADES)
     if not entidades:
         print("❌ No se pudieron obtener entidades.")
+        db.close()
         return
 
     for e in entidades:
@@ -236,44 +296,13 @@ def main():
 
             if contador_sesion % PAUSA_CADA == 0:
                 exportar_excel_y_csv(db, outdir, sello, etiqueta=f"snapshot_{contador_sesion}")
-                print(f"\n🛑 Pausa larga de {TIEMPO_DESCANSO/60:.0f} minutos...")
+                print(f"\n🛑 Pausa larga de {TIEMPO_DESCANSO / 60:.0f} minutos...")
                 time.sleep(TIEMPO_DESCANSO)
             else:
                 time.sleep(PAUSA_CORTA_SEG)
 
-    exportar_excel_y_csv(db, outdir, sello, etiqueta="final")
-import smtplib
-from email.message import EmailMessage
+    excel_path, csv_precios, csv_progreso = exportar_excel_y_csv(db, outdir, sello, etiqueta="final")
 
-def enviar_correo(archivos):
-    EMAIL_USER = os.getenv("EMAIL_USER")
-    EMAIL_PASS = os.getenv("EMAIL_PASS")
-
-    if not EMAIL_USER or not EMAIL_PASS:
-        print("❌ Faltan variables de correo")
-        return
-
-    msg = EmailMessage()
-    msg["Subject"] = "✅ CNE precios terminado"
-    msg["From"] = EMAIL_USER
-    msg["To"] = "ruizlara.roberto@gmail.com"
-    msg.set_content("Proceso terminado. Se adjuntan archivos.")
-
-    for archivo in archivos:
-        if archivo and os.path.exists(archivo):
-            with open(archivo, "rb") as f:
-                msg.add_attachment(
-                    f.read(),
-                    maintype="application",
-                    subtype="octet-stream",
-                    filename=os.path.basename(archivo)
-                )
-
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-        smtp.login(EMAIL_USER, EMAIL_PASS)
-        smtp.send_message(msg)
-
-    print("📧 Correo enviado")
     total = db.execute("SELECT COUNT(*) FROM precios").fetchone()[0]
     total_municipios = db.execute("SELECT COUNT(*) FROM progreso").fetchone()[0]
 
@@ -284,6 +313,13 @@ def enviar_correo(archivos):
     print(f"   Base SQLite: {db_path}")
 
     db.close()
+
+    enviar_correo([
+        str(excel_path),
+        str(csv_precios),
+        str(csv_progreso),
+    ])
+
 
 if __name__ == "__main__":
     main()
