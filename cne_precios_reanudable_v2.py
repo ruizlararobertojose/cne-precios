@@ -8,20 +8,22 @@ CNE precios nacional con:
 - Guardado incremental en SQLite
 - Exportación automática a Excel y CSV
 - Pausa cada 1000 municipios por 5 minutos
-- Envío opcional por correo al finalizar
+- Subida automática a Google Drive al finalizar
 """
 
 import argparse
+import json
 import os
 import sqlite3
 import time
-import smtplib
 from datetime import datetime
 from pathlib import Path
-from email.message import EmailMessage
 
 import pandas as pd
 import requests
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
 PAUSA_CADA = 1000
 TIEMPO_DESCANSO = 5 * 60
@@ -163,7 +165,7 @@ def exportar_excel_y_csv(db, outdir, sello, etiqueta="final"):
 
 
 def preparar_salida(resume_dir=None):
-    base_root = Path(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", Path.cwd()))
+    base_root = Path(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "/app/data"))
 
     if resume_dir:
         outdir = Path(resume_dir)
@@ -179,56 +181,64 @@ def preparar_salida(resume_dir=None):
     now = datetime.now()
     sello = now.strftime("%Y%m%d_%H%M%S")
     outdir = base_root / f"salida_{sello}"
-    outdir.mkdir(exist_ok=True)
+    outdir.mkdir(parents=True, exist_ok=True)
     db_path = outdir / DB_NAME
     print(f"🆕 Nueva corrida en: {outdir}")
     return outdir, db_path, sello
 
 
-def enviar_correo(archivos):
-    email_user = os.getenv("EMAIL_USER")
-    email_pass = os.getenv("EMAIL_PASS")
-    destinatario = os.getenv("EMAIL_TO", "ruizlara.roberto@gmail.com")
+def subir_a_google_drive(archivos):
+    service_account_json = os.getenv("GOOGLE_SERVICE_ACCOUNT")
+    folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
 
-    if not email_user or not email_pass:
-        print("❌ No se enviará correo: faltan EMAIL_USER o EMAIL_PASS")
+    if not service_account_json:
+        print("❌ Falta variable GOOGLE_SERVICE_ACCOUNT")
         return
 
-    msg = EmailMessage()
-    msg["Subject"] = "✅ CNE precios terminado"
-    msg["From"] = email_user
-    msg["To"] = destinatario
-    msg.set_content(
-        "Proceso terminado correctamente.\n\n"
-        "Se adjuntan los archivos generados."
-    )
-
-    archivos_adjuntos = 0
-    for archivo in archivos:
-        archivo = Path(archivo)
-        if archivo.exists() and archivo.is_file():
-            with open(archivo, "rb") as f:
-                msg.add_attachment(
-                    f.read(),
-                    maintype="application",
-                    subtype="octet-stream",
-                    filename=archivo.name
-                )
-            archivos_adjuntos += 1
-        else:
-            print(f"⚠️ No se encontró archivo para adjuntar: {archivo}")
-
-    if archivos_adjuntos == 0:
-        print("⚠️ No se adjuntó ningún archivo; se omite envío de correo")
+    if not folder_id:
+        print("❌ Falta variable GOOGLE_DRIVE_FOLDER_ID")
         return
 
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
-            smtp.login(email_user, email_pass)
-            smtp.send_message(msg)
-        print("📧 Correo enviado correctamente")
+        info = json.loads(service_account_json)
     except Exception as e:
-        print(f"❌ Error al enviar correo: {e}")
+        print(f"❌ No se pudo leer GOOGLE_SERVICE_ACCOUNT: {e}")
+        return
+
+    try:
+        scopes = ["https://www.googleapis.com/auth/drive"]
+        credentials = service_account.Credentials.from_service_account_info(
+            info,
+            scopes=scopes,
+        )
+        service = build("drive", "v3", credentials=credentials)
+
+        for archivo in archivos:
+            archivo = str(archivo)
+            if not archivo or not os.path.exists(archivo):
+                print(f"⚠️ Archivo no encontrado para subir: {archivo}")
+                continue
+
+            nombre = os.path.basename(archivo)
+            metadata = {
+                "name": nombre,
+                "parents": [folder_id],
+            }
+
+            media = MediaFileUpload(archivo, resumable=True)
+
+            creado = service.files().create(
+                body=metadata,
+                media_body=media,
+                fields="id,name,webViewLink"
+            ).execute()
+
+            print(f"✅ Subido a Drive: {creado.get('name')}")
+            print(f"   ID: {creado.get('id')}")
+            print(f"   Link: {creado.get('webViewLink')}")
+
+    except Exception as e:
+        print(f"❌ Error al subir a Google Drive: {e}")
 
 
 def main():
@@ -314,7 +324,7 @@ def main():
 
     db.close()
 
-    enviar_correo([
+    subir_a_google_drive([
         str(excel_path),
         str(csv_precios),
         str(csv_progreso),
