@@ -19,6 +19,14 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+# Importar función de email desde file_server
+try:
+    from file_server import send_email_async
+    EMAIL_DISPONIBLE = True
+except ImportError:
+    EMAIL_DISPONIBLE = False
+    print("⚠️ file_server no encontrado, email desactivado")
+
 import pandas as pd
 import requests
 from google.oauth2 import service_account
@@ -324,6 +332,17 @@ def main():
 
     db.close()
 
+    # Enviar reporte por email
+    if EMAIL_DISPONIBLE:
+        send_email_async(
+            folder_path=str(outdir),
+            folder_name=f"salida_{sello}",
+        )
+        print("📧 Email programado para envío en background.")
+    else:
+        print("⚠️ Email no disponible.")
+
+    # Subida a Google Drive (se mantiene como respaldo)
     subir_a_google_drive([
         str(excel_path),
         str(csv_precios),
