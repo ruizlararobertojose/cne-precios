@@ -217,7 +217,53 @@ def send_email_async(folder_path: str, folder_name: str):
     t = threading.Thread(target=send_email_report, args=(folder_path, folder_name), daemon=True)
     t.start()
 
+
+def send_test_email():
+    """Envía un email de prueba al arrancar el servidor para verificar configuración."""
+    gmail_user = os.environ.get("GMAIL_USER")
+    gmail_pass = os.environ.get("GMAIL_APP_PASS")
+    email_to   = os.environ.get("EMAIL_TO", gmail_user)
+
+    if not gmail_user or not gmail_pass:
+        print("⚠️  TEST EMAIL: Variables no configuradas, omitiendo.")
+        return
+
+    msg = MIMEMultipart()
+    msg["From"]    = gmail_user
+    msg["To"]      = email_to
+    msg["Subject"] = "✅ CNE Precios — Servidor activo y email funcionando"
+
+    body = f"""Hola,
+
+Este es un email de prueba automático del sistema CNE Precios.
+
+Si recibes este mensaje, el envío de correos está funcionando correctamente.
+
+🌐 Portal de descargas:
+https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'cne-precios-production.up.railway.app')}/files
+
+⏰ Hora de inicio del servidor: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+Recibirás un correo con los archivos adjuntos cada vez que el scraper termine su ejecución.
+
+---
+Mensaje automático · Sistema CNE Precios""".strip()
+
+    msg.attach(MIMEText(body, "plain"))
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(gmail_user, gmail_pass)
+            server.sendmail(gmail_user, email_to.split(","), msg.as_string())
+        print(f"✅ TEST EMAIL: Email de prueba enviado a {email_to}")
+    except Exception as e:
+        print(f"❌ TEST EMAIL: Error — {e}")
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     print(f"🌐 File server en puerto {port} | datos: {DATA_DIR}")
+    # Enviar email de prueba al arrancar (en background)
+    t = threading.Thread(target=send_test_email, daemon=True)
+    t.start()
     app.run(host="0.0.0.0", port=port, debug=False)
