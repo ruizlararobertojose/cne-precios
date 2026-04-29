@@ -206,12 +206,16 @@ Mensaje automático · Sistema CNE Precios""".strip()
         msg.attach(part)
 
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        print(f"📧 EMAIL: Conectando a smtp.gmail.com:587...")
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
             server.login(gmail_user, gmail_pass)
             server.sendmail(gmail_user, email_to.split(","), msg.as_string())
         print(f"✅ EMAIL: Reporte enviado a {email_to}")
     except Exception as e:
-        print(f"❌ EMAIL: Error al enviar — {e}")
+        print(f"❌ EMAIL: Error al enviar — {type(e).__name__}: {e}")
 
 def send_email_async(folder_path: str, folder_name: str):
     t = threading.Thread(target=send_email_report, args=(folder_path, folder_name), daemon=True)
@@ -252,18 +256,23 @@ Mensaje automático · Sistema CNE Precios""".strip()
     msg.attach(MIMEText(body, "plain"))
 
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        print(f"📧 TEST EMAIL: Conectando a smtp.gmail.com:587...")
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
             server.login(gmail_user, gmail_pass)
             server.sendmail(gmail_user, email_to.split(","), msg.as_string())
         print(f"✅ TEST EMAIL: Email de prueba enviado a {email_to}")
     except Exception as e:
-        print(f"❌ TEST EMAIL: Error — {e}")
+        print(f"❌ TEST EMAIL: Error — {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     print(f"🌐 File server en puerto {port} | datos: {DATA_DIR}")
-    # Enviar email de prueba al arrancar (en background)
-    t = threading.Thread(target=send_test_email, daemon=True)
+    # Enviar email de prueba al arrancar (esperar max 15s antes de iniciar Flask)
+    t = threading.Thread(target=send_test_email, daemon=False)
     t.start()
+    t.join(timeout=15)
     app.run(host="0.0.0.0", port=port, debug=False)
