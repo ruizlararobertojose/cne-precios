@@ -172,12 +172,12 @@ def _sendgrid_request(api_key: str, payload: dict) -> tuple:
 
 
 def send_email_report(folder_path: str, folder_name: str):
-    api_key  = os.environ.get("SENDGRID_API_KEY")
-    from_email = os.environ.get("GMAIL_USER")
+    api_key    = os.environ.get("SENDGRID_API_KEY")
+    from_email = os.environ.get("SENDGRID_FROM") or os.environ.get("GMAIL_USER")
     email_to   = os.environ.get("EMAIL_TO", from_email)
 
     if not api_key or not from_email:
-        print("⚠️  EMAIL: Variables SENDGRID_API_KEY / GMAIL_USER no configuradas.")
+        print("⚠️  EMAIL: Variables SENDGRID_API_KEY / SENDGRID_FROM no configuradas.")
         return
 
     attachments = []
@@ -243,11 +243,11 @@ def send_email_async(folder_path: str, folder_name: str):
 def send_test_email():
     """Envía un email de prueba al arrancar para verificar SendGrid."""
     api_key    = os.environ.get("SENDGRID_API_KEY")
-    from_email = os.environ.get("GMAIL_USER")
+    from_email = os.environ.get("SENDGRID_FROM") or os.environ.get("GMAIL_USER")
     email_to   = os.environ.get("EMAIL_TO", from_email)
 
     if not api_key or not from_email:
-        print("⚠️  TEST EMAIL: Variables SENDGRID_API_KEY / GMAIL_USER no configuradas.")
+        print("⚠️  TEST EMAIL: Variables SENDGRID_API_KEY / SENDGRID_FROM no configuradas.")
         return
 
     public_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "cne-precios-production.up.railway.app")
