@@ -5,12 +5,11 @@ Se ejecuta junto al scraper en el mismo servicio Railway.
 
 import os
 import glob
-import smtplib
+import base64
 import threading
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email.mime.text import MIMEText
-from email import encoders
+import urllib.request
+import urllib.error
+import json
 from datetime import datetime
 from flask import Flask, render_template_string, send_file, abort, jsonify
 
@@ -150,16 +149,35 @@ def health():
     return jsonify({"status": "ok", "time": datetime.now().isoformat()})
 
 # ─────────────────────────────────────────────
-# EMAIL
+# EMAIL VIA SENDGRID API (HTTP, no SMTP)
 # ─────────────────────────────────────────────
 
-def send_email_report(folder_path: str, folder_name: str):
-    gmail_user = os.environ.get("GMAIL_USER")
-    gmail_pass = os.environ.get("GMAIL_APP_PASS")
-    email_to   = os.environ.get("EMAIL_TO", gmail_user)
+def _sendgrid_request(api_key: str, payload: dict) -> tuple:
+    """Hace POST a la API de SendGrid. Devuelve (status_code, body)."""
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.sendgrid.com/v3/mail/send",
+        data=data,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return resp.status, resp.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()
 
-    if not gmail_user or not gmail_pass:
-        print("⚠️  EMAIL: Variables GMAIL_USER / GMAIL_APP_PASS no configuradas.")
+
+def send_email_report(folder_path: str, folder_name: str):
+    api_key  = os.environ.get("SENDGRID_API_KEY")
+    from_email = os.environ.get("GMAIL_USER")
+    email_to   = os.environ.get("EMAIL_TO", from_email)
+
+    if not api_key or not from_email:
+        print("⚠️  EMAIL: Variables SENDGRID_API_KEY / GMAIL_USER no configuradas.")
         return
 
     attachments = []
@@ -173,49 +191,49 @@ def send_email_report(folder_path: str, folder_name: str):
         print("⚠️  EMAIL: No se encontraron archivos finales.")
         return
 
-    public_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "tu-servicio.railway.app")
+    public_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "cne-precios-production.up.railway.app")
+    lista = chr(10).join("  • " + os.path.basename(a) for a in attachments)
 
-    msg = MIMEMultipart()
-    msg["From"]    = gmail_user
-    msg["To"]      = email_to
-    msg["Subject"] = f"📊 CNE Precios — Reporte {folder_name}"
-    body = f"""Hola,
+    body_text = f"""Hola,
 
 El scraper de precios CNE terminó correctamente.
 
-📁 Carpeta: {folder_name}
-📎 Archivos adjuntos: {len(attachments)}
+Carpeta: {folder_name}
+Archivos adjuntos: {len(attachments)}
 
 Archivos incluidos:
-{chr(10).join('  • ' + os.path.basename(a) for a in attachments)}
+{lista}
 
-También puedes descargar todos los reportes desde:
+Descarga todos los reportes en:
 https://{public_domain}/files
 
 ---
-Mensaje automático · Sistema CNE Precios""".strip()
+Mensaje automático - Sistema CNE Precios""".strip()
 
-    msg.attach(MIMEText(body, "plain"))
-
+    # Construir adjuntos en base64
+    sg_attachments = []
     for filepath in attachments:
-        with open(filepath, "rb") as f:
-            part = MIMEBase("application", "octet-stream")
-            part.set_payload(f.read())
-        encoders.encode_base64(part)
-        part.add_header("Content-Disposition", f'attachment; filename="{os.path.basename(filepath)}"')
-        msg.attach(part)
+        with open(filepath, "rb") as fh:
+            encoded = base64.b64encode(fh.read()).decode()
+        fname = os.path.basename(filepath)
+        mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if fname.endswith(".xlsx") else "text/csv"
+        sg_attachments.append({"content": encoded, "filename": fname, "type": mime, "disposition": "attachment"})
 
-    try:
-        print(f"📧 EMAIL: Conectando a smtp.gmail.com:587...")
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(gmail_user, gmail_pass)
-            server.sendmail(gmail_user, email_to.split(","), msg.as_string())
-        print(f"✅ EMAIL: Reporte enviado a {email_to}")
-    except Exception as e:
-        print(f"❌ EMAIL: Error al enviar — {type(e).__name__}: {e}")
+    payload = {
+        "personalizations": [{"to": [{"email": e.strip()} for e in email_to.split(",")]}],
+        "from": {"email": from_email},
+        "subject": f"CNE Precios - Reporte {folder_name}",
+        "content": [{"type": "text/plain", "value": body_text}],
+        "attachments": sg_attachments,
+    }
+
+    print(f"📧 EMAIL: Enviando via SendGrid a {email_to}...")
+    status, body = _sendgrid_request(api_key, payload)
+    if status in (200, 202):
+        print(f"✅ EMAIL: Reporte enviado a {email_to} (status {status})")
+    else:
+        print(f"❌ EMAIL: Error SendGrid status {status} — {body[:300]}")
+
 
 def send_email_async(folder_path: str, folder_name: str):
     t = threading.Thread(target=send_email_report, args=(folder_path, folder_name), daemon=True)
@@ -223,56 +241,52 @@ def send_email_async(folder_path: str, folder_name: str):
 
 
 def send_test_email():
-    """Envía un email de prueba al arrancar el servidor para verificar configuración."""
-    gmail_user = os.environ.get("GMAIL_USER")
-    gmail_pass = os.environ.get("GMAIL_APP_PASS")
-    email_to   = os.environ.get("EMAIL_TO", gmail_user)
+    """Envía un email de prueba al arrancar para verificar SendGrid."""
+    api_key    = os.environ.get("SENDGRID_API_KEY")
+    from_email = os.environ.get("GMAIL_USER")
+    email_to   = os.environ.get("EMAIL_TO", from_email)
 
-    if not gmail_user or not gmail_pass:
-        print("⚠️  TEST EMAIL: Variables no configuradas, omitiendo.")
+    if not api_key or not from_email:
+        print("⚠️  TEST EMAIL: Variables SENDGRID_API_KEY / GMAIL_USER no configuradas.")
         return
 
-    msg = MIMEMultipart()
-    msg["From"]    = gmail_user
-    msg["To"]      = email_to
-    msg["Subject"] = "✅ CNE Precios — Servidor activo y email funcionando"
+    public_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "cne-precios-production.up.railway.app")
 
-    body = f"""Hola,
+    body_text = f"""Hola,
 
-Este es un email de prueba automático del sistema CNE Precios.
+Este es un email de prueba del sistema CNE Precios.
 
-Si recibes este mensaje, el envío de correos está funcionando correctamente.
+Si recibes este mensaje, el envio de correos esta funcionando correctamente.
 
-🌐 Portal de descargas:
-https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'cne-precios-production.up.railway.app')}/files
+Portal de descargas:
+https://{public_domain}/files
 
-⏰ Hora de inicio del servidor: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Hora de inicio: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
-Recibirás un correo con los archivos adjuntos cada vez que el scraper termine su ejecución.
+Recibiras un correo con los archivos adjuntos cada vez que el scraper termine.
 
 ---
-Mensaje automático · Sistema CNE Precios""".strip()
+Mensaje automatico - Sistema CNE Precios""".strip()
 
-    msg.attach(MIMEText(body, "plain"))
+    payload = {
+        "personalizations": [{"to": [{"email": e.strip()} for e in email_to.split(",")]}],
+        "from": {"email": from_email},
+        "subject": "CNE Precios - Servidor activo y email funcionando",
+        "content": [{"type": "text/plain", "value": body_text}],
+    }
 
-    try:
-        print(f"📧 TEST EMAIL: Conectando a smtp.gmail.com:587...")
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(gmail_user, gmail_pass)
-            server.sendmail(gmail_user, email_to.split(","), msg.as_string())
+    print(f"📧 TEST EMAIL: Enviando via SendGrid a {email_to}...")
+    status, body = _sendgrid_request(api_key, payload)
+    if status in (200, 202):
         print(f"✅ TEST EMAIL: Email de prueba enviado a {email_to}")
-    except Exception as e:
-        print(f"❌ TEST EMAIL: Error — {type(e).__name__}: {e}")
+    else:
+        print(f"❌ TEST EMAIL: Error SendGrid status {status} — {body[:300]}")
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     print(f"🌐 File server en puerto {port} | datos: {DATA_DIR}")
-    # Enviar email de prueba al arrancar (esperar max 15s antes de iniciar Flask)
     t = threading.Thread(target=send_test_email, daemon=False)
     t.start()
-    t.join(timeout=15)
+    t.join(timeout=20)
     app.run(host="0.0.0.0", port=port, debug=False)
