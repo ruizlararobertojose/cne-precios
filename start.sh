@@ -1,27 +1,15 @@
 #!/bin/bash
-# start.sh — Arranca el file server y luego el scraper
+# start.sh inteligente
+# - Si Railway lo llama como CRON → corre solo el scraper y termina
+# - Si Railway lo llama como WEB  → corre Flask permanentemente
 
-echo "🚀 Iniciando sistema CNE Precios..."
-
-# 1. Lanzar servidor web en background
-echo "🌐 Arrancando file server..."
-python file_server.py &
-WEB_PID=$!
-sleep 2
-
-if kill -0 $WEB_PID 2>/dev/null; then
-    echo "✅ Web server activo (PID: $WEB_PID)"
+# Railway pone RAILWAY_CRON_JOB_ID cuando es una corrida de cron
+if [ -n "$RAILWAY_CRON_JOB_ID" ]; then
+    echo "🕐 Modo CRON detectado — ejecutando scraper..."
+    python cne_precios_reanudable_v2.py
+    echo "✅ Scraper terminado. Saliendo."
+    exit 0
 else
-    echo "❌ Web server no pudo iniciar"
+    echo "🌐 Modo WEB detectado — iniciando file server..."
+    python file_server.py
 fi
-
-# 2. Ejecutar scraper
-echo ""
-echo "⚙️  Ejecutando scraper CNE..."
-python cne_precios_reanudable_v2.py
-
-echo ""
-echo "📋 Scraper terminado. Web server sigue activo."
-
-# 3. Mantener el web server vivo
-wait $WEB_PID
