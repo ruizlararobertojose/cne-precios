@@ -1,20 +1,14 @@
 #!/bin/bash
-# start.sh inteligente
-# Detecta si es cron o web server
+# start.sh — detecta modo via variable RUN_MODE
 
-echo "=== Variables de entorno Railway ==="
-echo "RAILWAY_CRON_JOB_ID: ${RAILWAY_CRON_JOB_ID:-NO_DEFINIDA}"
-echo "PORT: ${PORT:-NO_DEFINIDA}"
-echo "===================================="
+echo "RUN_MODE: ${RUN_MODE:-NO_DEFINIDA}"
 
-# Si NO hay PORT definido → es una corrida de cron
-# Railway siempre asigna PORT al web service, pero NO al cron
-if [ -z "$PORT" ]; then
-    echo "🕐 Modo CRON detectado (sin PORT) — ejecutando scraper..."
+if [ "$RUN_MODE" = "cron" ]; then
+    echo "🕐 Modo CRON — ejecutando scraper..."
     python cne_precios_reanudable_v2.py
-    echo "✅ Scraper terminado. Saliendo."
+    echo "✅ Scraper terminado."
     exit 0
 else
-    echo "🌐 Modo WEB detectado (PORT=$PORT) — iniciando file server..."
+    echo "🌐 Modo WEB — iniciando file server..."
     python file_server.py
 fi
