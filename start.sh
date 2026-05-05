@@ -1,15 +1,20 @@
 #!/bin/bash
 # start.sh inteligente
-# - Si Railway lo llama como CRON → corre solo el scraper y termina
-# - Si Railway lo llama como WEB  → corre Flask permanentemente
+# Detecta si es cron o web server
 
-# Railway pone RAILWAY_CRON_JOB_ID cuando es una corrida de cron
-if [ -n "$RAILWAY_CRON_JOB_ID" ]; then
-    echo "🕐 Modo CRON detectado — ejecutando scraper..."
+echo "=== Variables de entorno Railway ==="
+echo "RAILWAY_CRON_JOB_ID: ${RAILWAY_CRON_JOB_ID:-NO_DEFINIDA}"
+echo "PORT: ${PORT:-NO_DEFINIDA}"
+echo "===================================="
+
+# Si NO hay PORT definido → es una corrida de cron
+# Railway siempre asigna PORT al web service, pero NO al cron
+if [ -z "$PORT" ]; then
+    echo "🕐 Modo CRON detectado (sin PORT) — ejecutando scraper..."
     python cne_precios_reanudable_v2.py
     echo "✅ Scraper terminado. Saliendo."
     exit 0
 else
-    echo "🌐 Modo WEB detectado — iniciando file server..."
+    echo "🌐 Modo WEB detectado (PORT=$PORT) — iniciando file server..."
     python file_server.py
 fi
