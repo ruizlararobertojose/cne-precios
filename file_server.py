@@ -283,10 +283,25 @@ Mensaje automatico - Sistema CNE Precios""".strip()
         print(f"❌ TEST EMAIL: Error SendGrid status {status} — {body[:300]}")
 
 
+def auto_shutdown():
+    """Apaga el servidor después de 5.5 horas para que el cron pueda arrancar limpio."""
+    import time
+    import os
+    import signal
+    horas = 5.5
+    print(f"⏱️  Auto-shutdown programado en {horas} horas.")
+    time.sleep(horas * 3600)
+    print("🛑 Auto-shutdown: apagando web server...")
+    os.kill(os.getpid(), signal.SIGTERM)
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     print(f"🌐 File server en puerto {port} | datos: {DATA_DIR}")
+    # Email de prueba al arrancar
     t = threading.Thread(target=send_test_email, daemon=False)
     t.start()
     t.join(timeout=20)
+    # Auto-shutdown después de 5.5 horas
+    t2 = threading.Thread(target=auto_shutdown, daemon=True)
+    t2.start()
     app.run(host="0.0.0.0", port=port, debug=False)
